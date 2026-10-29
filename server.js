@@ -19,6 +19,7 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:4200",
   "capacitor://localhost",
   "ionic://localhost",
+  "https://limegreen-cattle-503506.hostingersite.com/",
   ...(process.env.CORS_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())
