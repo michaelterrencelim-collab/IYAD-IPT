@@ -5,7 +5,7 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const cookieParser = require("cookie-parser");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
@@ -13,10 +13,6 @@ app.use(cookieParser());
 const allowedOrigins = new Set([
   "http://localhost",
   "http://127.0.0.1",
-  "http://localhost:8100",
-  "http://127.0.0.1:8100",
-  "http://localhost:4200",
-  "http://127.0.0.1:4200",
   "capacitor://localhost",
   "ionic://localhost",
   "https://limegreen-cattle-503506.hostingersite.com/",
@@ -89,6 +85,10 @@ app.use((req, res) => {
 });
 
 if (require.main === module) {
+  if (!PORT) {
+    throw new Error("PORT environment variable is required");
+  }
+
   const orderClaimTimer = setInterval(() => {
     orderRoutes.processDueClaims().catch((error) => {
       console.error("Automatic order claim check failed:", error);
@@ -97,7 +97,7 @@ if (require.main === module) {
   orderClaimTimer.unref();
 
   app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+    console.log("Server listening");
   });
 }
 

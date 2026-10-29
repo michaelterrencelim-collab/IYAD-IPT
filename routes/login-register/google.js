@@ -9,7 +9,7 @@ const { OAuth2Client } = require("google-auth-library");
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/api/auth/google/callback";
+const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL;
 
 const googleClient = new OAuth2Client(
   GOOGLE_CLIENT_ID,
@@ -148,7 +148,7 @@ app.get("/auth/google/callback", async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000,
     });
 
-    const frontendOrigin = (process.env.FRONTEND_ORIGIN || "http://localhost:4200")
+    const frontendOrigin = (process.env.FRONTEND_ORIGIN || "http://localhost")
       .split(",")[0]
       .trim()
       .replace(/\/+$/, "");
