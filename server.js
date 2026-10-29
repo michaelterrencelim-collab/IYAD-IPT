@@ -5,7 +5,7 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const cookieParser = require("cookie-parser");
 
 const app = express();
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
@@ -13,6 +13,11 @@ app.use(cookieParser());
 const allowedOrigins = new Set([
   "http://localhost",
   "http://127.0.0.1",
+  "http://localhost:8100",
+  "http://127.0.0.1:8100",
+  "http://localhost:4200",
+  "http://127.0.0.1:4200",
+  "https://localhost",
   "capacitor://localhost",
   "ionic://localhost",
   "https://limegreen-cattle-503506.hostingersite.com/",
@@ -37,17 +42,12 @@ app.use((req, res, next) => {
 
   res.setHeader(
     "Access-Control-Allow-Methods",
-    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization"
-  );
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
-    return res.sendStatus(
-      origin && !allowedOrigins.has(origin) ? 403 : 204
-    );
+    return res.sendStatus(origin && !allowedOrigins.has(origin) ? 403 : 204);
   }
 
   next();
@@ -74,7 +74,6 @@ function loadRoutes(directory) {
 }
 
 loadRoutes(routersPath);
-const orderRoutes = require("./routes/orders");
 
 const filesPath = path.join(__dirname, "files");
 app.use("/assets", express.static(path.join(__dirname, "assets")));
@@ -85,19 +84,8 @@ app.use((req, res) => {
 });
 
 if (require.main === module) {
-  if (!PORT) {
-    throw new Error("PORT environment variable is required");
-  }
-
-  const orderClaimTimer = setInterval(() => {
-    orderRoutes.processDueClaims().catch((error) => {
-      console.error("Automatic order claim check failed:", error);
-    });
-  }, 30_000);
-  orderClaimTimer.unref();
-
   app.listen(PORT, () => {
-    console.log("Server listening");
+    console.log(`Server running at http://localhost:${PORT}`);
   });
 }
 

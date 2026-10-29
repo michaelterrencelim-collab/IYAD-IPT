@@ -4,7 +4,7 @@
   const requireAuth = (requiredRole = "user") => {
     // 3. Return the actual middleware function Express expects
     return (req, res, next) => {
-      const token = req.cookies?.auth; // <- read from cookie
+      const token = bearerToken(req) || req.cookies?.auth;
       console.log("auth a");
       if (!token) return res.redirect("/login"); // <- redirect to login if no token
       console.log("auth b");
@@ -30,7 +30,7 @@
     const checkAuth = (requiredRole = "user") => {
     // 3. Return the actual middleware function Express expects
     return (req, res, next) => {
-      const token = req.cookies?.auth; // <- read from cookie
+      const token = bearerToken(req) || req.cookies?.auth;
       console.log("auth a");
       if (!token) return res.status(401).json({ error: "Not logged in" }); // <- return error if no token
       console.log("auth b");
@@ -51,5 +51,11 @@
       });
     };
   };
+
+  function bearerToken(req) {
+    const authorization = req.get("authorization") || "";
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1] : null;
+  }
 
   module.exports = { requireAuth, checkAuth };

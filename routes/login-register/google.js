@@ -3,7 +3,6 @@ const app = express.Router();
 
 const db = require("../../imports/database");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
 const { OAuth2Client } = require("google-auth-library");
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -19,23 +18,116 @@ const googleClient = new OAuth2Client(
 
 app.customPath = "/api";
 
-let googleSchemaReady;
-async function ensureGoogleSchema() {
-  if (!googleSchemaReady) {
-    googleSchemaReady = (async () => {
-      const columns = await db.execute("PRAGMA table_info(users)");
-      if (!columns.rows.some((column) => column.name === "google_id")) {
-        await db.execute("ALTER TABLE users ADD COLUMN google_id TEXT");
-      }
-    })().catch((error) => {
-      googleSchemaReady = null;
-      throw error;
-    });
+async function findOrCreateGoogleUser(payload) {
+  if (!payload?.sub || !payload.email || payload.email_verified !== true) {
+    const error = new Error("Google email is not verified");
+    error.status = 401;
+    throw error;
   }
-  return googleSchemaReady;
+
+  const email = payload.email.trim().toLowerCase();
+  const googleId = payload.sub;
+  const existingResult = await db.execute({
+    sql: `
+      SELECT user_id, username, full_name, email, role, account_status, google_id
+      FROM users
+      WHERE email = ?
+    `,
+    args: [email],
+  });
+
+  let user = existingResult.rows[0];
+  if (user) {
+    if (user.account_status !== "Active") {
+      const error = new Error("Account is not active");
+      error.status = 403;
+      throw error;
+    }
+    if (user.google_id && user.google_id !== googleId) {
+      const error = new Error("This account is linked to another Google account");
+      error.status = 409;
+      throw error;
+    }
+    if (!user.google_id) {
+      await db.execute({
+        sql: "UPDATE users SET google_id = ? WHERE user_id = ?",
+        args: [googleId, user.user_id],
+      });
+      user = { ...user, google_id: googleId };
+    }
+  } else {
+    const fullName =
+      [payload.given_name, payload.family_name]
+        .filter((part) => typeof part === "string" && part.trim())
+        .map((part) => part.trim())
+        .join(" ") || payload.name?.trim() || email.split("@")[0];
+    const result = await db.execute({
+      sql: `
+        INSERT INTO users (username, full_name, email, password_hash, google_id)
+        VALUES (?, ?, ?, NULL, ?)
+        RETURNING user_id, username, full_name, email, role, account_status, google_id
+      `,
+      args: [email.split("@")[0], fullName, email, googleId],
+    });
+    user = result.rows[0];
+    if (!user) {
+      const error = new Error("Failed to create account");
+      error.status = 500;
+      throw error;
+    }
+  }
+  return user;
 }
 
-app.get("/auth/google", (_req, res) => {
+function createAppToken(user) {
+  return jwt.sign(
+    {
+      userId: user.user_id,
+      email: user.email,
+      role: String(user.role).toLowerCase() === "admin" ? "admin" : "user",
+    },
+    JWT_SECRET,
+    { expiresIn: "24h" },
+  );
+}
+
+app.get("/auth/google/config", (_req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: "Google authentication is not configured" });
+  }
+  return res.json({ webClientId: GOOGLE_CLIENT_ID });
+});
+
+app.post("/auth/google/native", async (req, res) => {
+  try {
+    if (!GOOGLE_CLIENT_ID) {
+      return res.status(503).json({ error: "Google authentication is not configured" });
+    }
+    const idToken = req.body?.idToken;
+    if (typeof idToken !== "string" || !idToken) {
+      return res.status(400).json({ error: "Missing Google identity token" });
+    }
+
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
+    const user = await findOrCreateGoogleUser(ticket.getPayload());
+    return res.json({
+      token: createAppToken(user),
+      user: {
+        userId: user.user_id,
+        fullName: user.full_name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Native Google login error:", err);
+    return res.status(err.status || 500).json({
+      error: err.status ? err.message : "Google authentication failed",
+    });
+  }
+});
+
+app.get("/auth/google", (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
     return res.status(503).json({ error: "Google authentication is not configured" });
   }
@@ -55,8 +147,6 @@ app.get("/auth/google/callback", async (req, res) => {
       return res.status(400).json({ error: "Missing Google authorization code" });
     }
 
-    await ensureGoogleSchema();
-
     const { tokens } = await googleClient.getToken(req.query.code);
     if (!tokens.id_token) {
       return res.status(401).json({ error: "Google did not return an identity token" });
@@ -72,74 +162,8 @@ app.get("/auth/google/callback", async (req, res) => {
       return res.status(401).json({ error: "Google email is not verified" });
     }
 
-    const email = payload.email.trim().toLowerCase();
-    const googleId = payload.sub;
-    const existingResult = await db.execute({
-      sql: `
-        SELECT user_id, username, full_name, email, role, account_status, google_id
-        FROM users
-        WHERE email = ?
-      `,
-      args: [email],
-    });
-
-    let user = existingResult.rows[0];
-    if (user) {
-      if (user.account_status !== "Active") {
-        return res.status(403).json({ error: "Account is not active" });
-      }
-      if (user.google_id && user.google_id !== googleId) {
-        return res.status(409).json({ error: "This account is linked to another Google account" });
-      }
-
-      if (!user.google_id) {
-        await db.execute({
-          sql: "UPDATE users SET google_id = ? WHERE user_id = ?",
-          args: [googleId, user.user_id],
-        });
-        user = { ...user, google_id: googleId };
-      }
-    } else {
-      const fullName =
-        [payload.given_name, payload.family_name]
-          .filter((part) => typeof part === "string" && part.trim())
-          .map((part) => part.trim())
-          .join(" ") || payload.name?.trim() || email.split("@")[0];
-      const username = `${email.split("@")[0].slice(0, 50)}_${googleId.slice(-8)}`;
-      // The existing users schema requires password_hash. This deliberately does not
-      // use the scrypt format, so password login cannot authenticate a Google-only account.
-      const unusablePasswordHash = `google:${crypto.randomBytes(32).toString("hex")}`;
-
-      const result = await db.execute({
-        sql: `
-          INSERT INTO users (
-            username,
-            full_name,
-            email,
-            password_hash,
-            google_id
-          )
-          VALUES (?, ?, ?, ?, ?)
-          RETURNING user_id, username, full_name, email, role, account_status, google_id
-        `,
-        args: [username, fullName, email, unusablePasswordHash, googleId],
-      });
-      user = result.rows[0];
-      if (!user) {
-        return res.status(500).json({ error: "Failed to create account" });
-      }
-    }
-
-    const isAdmin = String(user.role).toLowerCase() === "admin";
-    const token = jwt.sign(
-      {
-        userId: user.user_id,
-        email: user.email,
-        role: isAdmin ? "admin" : "user",
-      },
-      JWT_SECRET,
-      { expiresIn: "24h" },
-    );
+    const user = await findOrCreateGoogleUser(payload);
+    const token = createAppToken(user);
 
     res.cookie("auth", token, {
       httpOnly: true,
@@ -148,11 +172,10 @@ app.get("/auth/google/callback", async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000,
     });
 
-    const frontendOrigin = (process.env.FRONTEND_ORIGIN || "http://localhost")
+    const frontendOrigin = (process.env.FRONTEND_ORIGIN || "")
       .split(",")[0]
-      .trim()
-      .replace(/\/+$/, "");
-    return res.redirect(`${frontendOrigin}/auth/google/callback`);
+      .trim();
+    return res.redirect(frontendOrigin || "/");
   } catch (err) {
     console.error("Google login error:", err);
     return res.status(500).json({ error: "Google authentication failed" });
