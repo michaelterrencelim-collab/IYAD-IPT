@@ -1,0 +1,35 @@
+{
+  "name": "caravanbackend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Cantis10/caravanBackend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Cantis10/caravanBackend/issues"
+  },
+  "homepage": "https://github.com/Cantis10/caravanBackend#readme",
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "form-data": "^4.0.6",
+    "google-auth-library": "^11.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mailgun.js": "^14.0.0",
+    "nodemon": "^3.1.14",
+    "path": "^0.12.7"
+  }
+}
