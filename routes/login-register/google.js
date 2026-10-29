@@ -91,6 +91,27 @@ function createAppToken(user) {
   );
 }
 
+function normalizeOrigin(value) {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function allowedFrontendOrigins() {
+  return new Set([
+    'http://localhost:8100',
+    'http://127.0.0.1:8100',
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+    ...(process.env.CORS_ORIGINS || '').split(','),
+    ...(process.env.FRONTEND_ORIGIN || '').split(','),
+  ].map((value) => normalizeOrigin(value.trim())).filter(Boolean));
+}
+
 app.get("/auth/google/config", (_req, res) => {
   if (!GOOGLE_CLIENT_ID) {
     return res.status(503).json({ error: "Google authentication is not configured" });
@@ -132,10 +153,21 @@ app.get("/auth/google", (req, res) => {
     return res.status(503).json({ error: "Google authentication is not configured" });
   }
 
+  const requestedOrigin = typeof req.query.returnOrigin === 'string'
+    ? normalizeOrigin(req.query.returnOrigin)
+    : null;
+  const configuredOrigin = (process.env.FRONTEND_ORIGIN || '').split(',')[0].trim();
+  const returnOrigin = requestedOrigin || normalizeOrigin(configuredOrigin);
+  if (!returnOrigin || !allowedFrontendOrigins().has(returnOrigin)) {
+    return res.status(400).json({ error: 'The application return URL is not configured or allowed' });
+  }
+
+  const state = jwt.sign({ purpose: 'google-login', returnOrigin }, JWT_SECRET, { expiresIn: '10m' });
   const url = googleClient.generateAuthUrl({
     access_type: "offline",
     scope: ["openid", "email", "profile"],
     prompt: "select_account",
+    state,
   });
 
   return res.redirect(url);
@@ -143,6 +175,19 @@ app.get("/auth/google", (req, res) => {
 
 app.get("/auth/google/callback", async (req, res) => {
   try {
+    if (typeof req.query.state !== 'string') {
+      return res.status(400).json({ error: 'Missing Google sign-in state' });
+    }
+    let state;
+    try {
+      state = jwt.verify(req.query.state, JWT_SECRET);
+    } catch {
+      return res.status(400).json({ error: 'Google sign-in state is invalid or expired' });
+    }
+    if (state.purpose !== 'google-login' || !allowedFrontendOrigins().has(state.returnOrigin)) {
+      return res.status(400).json({ error: 'Google sign-in return URL is invalid' });
+    }
+
     if (!req.query.code || typeof req.query.code !== "string") {
       return res.status(400).json({ error: "Missing Google authorization code" });
     }
@@ -167,15 +212,12 @@ app.get("/auth/google/callback", async (req, res) => {
 
     res.cookie("auth", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: true,
+      sameSite: "none",
       maxAge: 24 * 60 * 60 * 1000,
     });
 
-    const frontendOrigin = (process.env.FRONTEND_ORIGIN || "")
-      .split(",")[0]
-      .trim();
-    return res.redirect(frontendOrigin || "/");
+    return res.redirect(new URL('/auth/google/callback', state.returnOrigin).toString());
   } catch (err) {
     console.error("Google login error:", err);
     return res.status(500).json({ error: "Google authentication failed" });
