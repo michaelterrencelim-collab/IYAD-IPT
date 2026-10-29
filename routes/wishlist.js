@@ -1,6 +1,6 @@
 ﻿const express = require("express");
-const { checkAuth } = require("../../imports/token");
-const db = require("../../imports/database");
+const { checkAuth } = require("../imports/token");
+const db = require("../imports/database");
 
 const app = express.Router();
 const authenticated = checkAuth("user");
